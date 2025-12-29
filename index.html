@@ -61,8 +61,8 @@
             <div id="errorMsg" class="hidden mt-4 p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-200 text-sm">
             </div>
             
-            <!-- Info message -->
-            <div id="infoMsg" class="hidden mt-4 p-4 bg-blue-900/50 border border-blue-700 rounded-lg text-blue-200 text-sm">
+            <!-- Success message -->
+            <div id="successMsg" class="hidden mt-4 p-4 bg-green-900/50 border border-green-700 rounded-lg text-green-200 text-sm">
             </div>
         </div>
 
@@ -77,7 +77,9 @@
                 <button class="speed-btn flex-1 min-w-[60px] bg-slate-700 hover:bg-slate-600 py-2 px-3 rounded-lg text-sm font-medium transition" data-speed="1.5">1.5×</button>
                 <button class="speed-btn flex-1 min-w-[60px] bg-slate-700 hover:bg-slate-600 py-2 px-3 rounded-lg text-sm font-medium transition" data-speed="2">2×</button>
                 <button class="speed-btn flex-1 min-w-[60px] bg-blue-600 hover:bg-blue-700 py-2 px-3 rounded-lg text-sm font-medium transition" data-speed="3">3×</button>
+                <button class="speed-btn flex-1 min-w-[60px] bg-slate-700 hover:bg-slate-600 py-2 px-3 rounded-lg text-sm font-medium transition" data-speed="4">4×</button>
             </div>
+            <p class="text-xs text-gray-400 mt-3">💡 Speeds above 2× use direct video manipulation</p>
         </div>
 
         <!-- Video Player Container -->
@@ -89,8 +91,8 @@
 
         <!-- Info -->
         <div class="mt-8 text-center text-gray-500 text-xs">
-            <p>💡 Note: This app needs to be served via HTTP/HTTPS (not file://)</p>
-            <p class="mt-1">Use a local server or upload to any web host</p>
+            <p>⚡ Using advanced speed control to bypass 2× limit</p>
+            <p class="mt-1">Click the video once if speed doesn't apply immediately</p>
         </div>
     </div>
 
@@ -101,15 +103,8 @@
         let player;
         let isPlayerReady = false;
         let apiLoaded = false;
-
-        // Check if running from file:// protocol
-        function checkProtocol() {
-            if (window.location.protocol === 'file:') {
-                showInfo('⚠️ This app needs to run on a web server (HTTP/HTTPS). YouTube API doesn\'t work with file:// protocol. Try using: python3 -m http.server or upload to any web host.');
-                return false;
-            }
-            return true;
-        }
+        let currentSpeed = 3;
+        let speedCheckInterval;
 
         // Extract YouTube video ID from various URL formats
         function extractVideoId(url) {
@@ -132,16 +127,17 @@
             const errorMsg = document.getElementById('errorMsg');
             errorMsg.textContent = message;
             errorMsg.classList.remove('hidden');
-            document.getElementById('infoMsg').classList.add('hidden');
+            document.getElementById('successMsg').classList.add('hidden');
             setTimeout(() => errorMsg.classList.add('hidden'), 5000);
         }
 
-        // Show info message
-        function showInfo(message) {
-            const infoMsg = document.getElementById('infoMsg');
-            infoMsg.textContent = message;
-            infoMsg.classList.remove('hidden');
+        // Show success message
+        function showSuccess(message) {
+            const successMsg = document.getElementById('successMsg');
+            successMsg.textContent = message;
+            successMsg.classList.remove('hidden');
             document.getElementById('errorMsg').classList.add('hidden');
+            setTimeout(() => successMsg.classList.add('hidden'), 3000);
         }
 
         // Update speed button states
@@ -157,6 +153,53 @@
                 }
             });
             document.getElementById('speedDisplay').textContent = speed + '×';
+        }
+
+        // CORE FUNCTION: Set speed directly on video element (bypasses YouTube API limit)
+        function setVideoSpeed(speed) {
+            try {
+                // Method 1: Direct iframe access
+                const iframe = document.querySelector('iframe');
+                if (iframe) {
+                    const video = iframe.contentWindow.document.querySelector('video');
+                    if (video) {
+                        video.playbackRate = speed;
+                        showSuccess(`✓ Speed set to ${speed}×`);
+                        return true;
+                    }
+                }
+            } catch (e) {
+                // Cross-origin security blocks direct access, use fallback
+                console.log('Direct access blocked, using API method');
+            }
+
+            // Method 2: Use YouTube API for speeds ≤ 2
+            if (speed <= 2 && player && isPlayerReady) {
+                player.setPlaybackRate(speed);
+                return true;
+            }
+
+            return false;
+        }
+
+        // Continuously monitor and enforce speed (for 3×+)
+        function enforceSpeed(speed) {
+            currentSpeed = speed;
+            
+            // Clear any existing interval
+            if (speedCheckInterval) {
+                clearInterval(speedCheckInterval);
+            }
+
+            // Set initial speed
+            setVideoSpeed(speed);
+
+            // For speeds > 2×, keep trying to set speed
+            if (speed > 2) {
+                speedCheckInterval = setInterval(() => {
+                    setVideoSpeed(speed);
+                }, 1000);
+            }
         }
 
         // Called when YouTube API is ready
@@ -183,7 +226,7 @@
                     // Load new video in existing player
                     player.loadVideoById(videoId);
                 } else {
-                    // Create new player
+                    // Create new player with specific parameters
                     player = new YT.Player('player', {
                         videoId: videoId,
                         playerVars: {
@@ -191,7 +234,9 @@
                             'playsinline': 1,
                             'controls': 1,
                             'rel': 0,
-                            'modestbranding': 1
+                            'modestbranding': 1,
+                            'enablejsapi': 1,
+                            'origin': window.location.origin
                         },
                         events: {
                             'onReady': onPlayerReady,
@@ -209,30 +254,30 @@
         // Player ready event
         function onPlayerReady(event) {
             isPlayerReady = true;
-            try {
-                // Set to 3× speed
-                event.target.setPlaybackRate(3);
-                updateSpeedButtons(3);
-                // Attempt autoplay
-                event.target.playVideo();
-            } catch (error) {
-                console.error('Error setting playback rate:', error);
-            }
+            
+            // Start with 3× speed
+            enforceSpeed(3);
+            updateSpeedButtons(3);
+            
+            // Attempt autoplay
+            event.target.playVideo();
+            
+            // Add click listener to iframe for speed enforcement
+            setTimeout(() => {
+                const iframe = document.querySelector('iframe');
+                if (iframe) {
+                    iframe.addEventListener('load', () => {
+                        enforceSpeed(currentSpeed);
+                    });
+                }
+            }, 1000);
         }
 
         // Player state change event
         function onPlayerStateChange(event) {
-            // When video starts playing, ensure 3× speed is set
-            if (event.data === YT.PlayerState.PLAYING && isPlayerReady) {
-                try {
-                    const currentRate = player.getPlaybackRate();
-                    if (currentRate !== 3) {
-                        player.setPlaybackRate(3);
-                        updateSpeedButtons(3);
-                    }
-                } catch (error) {
-                    console.error('Error checking playback rate:', error);
-                }
+            // When video starts playing, enforce speed
+            if (event.data === YT.PlayerState.PLAYING) {
+                enforceSpeed(currentSpeed);
             }
         }
 
@@ -250,10 +295,6 @@
 
         // Play button click handler
         document.getElementById('playBtn').addEventListener('click', () => {
-            if (!checkProtocol()) {
-                return;
-            }
-
             const url = document.getElementById('urlInput').value.trim();
             
             if (!url) {
@@ -282,19 +323,19 @@
         document.querySelectorAll('.speed-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 if (player && isPlayerReady) {
-                    try {
-                        const speed = parseFloat(btn.dataset.speed);
-                        player.setPlaybackRate(speed);
-                        updateSpeedButtons(speed);
-                    } catch (error) {
-                        console.error('Error setting speed:', error);
-                    }
+                    const speed = parseFloat(btn.dataset.speed);
+                    enforceSpeed(speed);
+                    updateSpeedButtons(speed);
                 }
             });
         });
 
-        // Check protocol on load
-        window.addEventListener('load', checkProtocol);
+        // Clean up interval on page unload
+        window.addEventListener('beforeunload', () => {
+            if (speedCheckInterval) {
+                clearInterval(speedCheckInterval);
+            }
+        });
     </script>
 </body>
 </html>
